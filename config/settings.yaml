@@ -1,0 +1,54 @@
+location:
+  lat: 38.7169
+  lon: -9.1399
+  radius_km: 10
+  name: "Casa"
+
+telegram:
+  token: "${TELEGRAM_BOT_TOKEN}"
+  chat_id: "${TELEGRAM_CHAT_ID}"
+
+filters:
+  min_severity: LOW
+  quiet_hours:
+    enabled: true
+    start: "23:00"
+    end: "07:00"
+    except_severity: CRITICAL
+
+collectors:
+  ipma:
+    enabled: true
+    interval_minutes: 10
+  fogos:
+    enabled: true
+    interval_minutes: 5
+  transit:
+    enabled: false
+    interval_minutes: 3
+    provider: "here"
+  greves:
+    enabled: false
+    interval_minutes: 60
+  obras:
+    enabled: false
+    interval_minutes: 360
+  air_quality:
+    enabled: false
+    interval_minutes: 30
+
+api_keys:
+  here: "${HERE_API_KEY}"
+  tomtom: "${TOMTOM_API_KEY}"
+  nasa_firms: "${NASA_FIRMS_KEY}"
+
+dedup:
+  ttl_hours:
+    FIRE: 2
+    STORM: 6
+    EARTHQUAKE: 24
+    ACCIDENT: 1
+    ROAD_CLOSURE: 4
+    POWER_OUTAGE: 4
+    STRIKE: 24
+    PLANNED_WORKS: 168

@@ -1,0 +1,11 @@
+services:
+  alerta-local:
+    build: .
+    restart: unless-stopped
+    volumes:
+      - alerta_data:/app/data
+      - ./config:/app/config
+    env_file: .env
+
+volumes:
+  alerta_data:
