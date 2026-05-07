@@ -117,7 +117,11 @@ def _build_message(event: Event, distance_km: float, location_name: str) -> str:
     severity_label = _escape(event.severity.value)
 
     header = f"{emoji} *{_escape(type_label)} — {severity_label}*"
-    location_line = f"📍 {_escape(location_name)} \\({_escape(f'{distance_km:.1f} km de casa')}\\)"
+    if event.title:
+        header += f"\n*{_escape(event.title)}*"
+
+    distance_str = f"{distance_km:.1f} km de {location_name}"
+    location_line = f"📍 {_escape(distance_str)}"
     timeline = _format_timeline(event.started_at, event.ends_at)
 
     body_lines = [header, location_line, f"🕐 {timeline}", ""]

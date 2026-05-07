@@ -209,6 +209,15 @@ class AlertScheduler:
 
         for event in events:
             try:
+                # Skip closed/resolved events
+                if event.status not in ("active", "resolving", ""):
+                    continue
+
+                # Hard radius guard (belt-and-suspenders over base.py collect())
+                distance_km = haversine(lat, lon, event.lat, event.lon)
+                if distance_km > radius_km:
+                    continue
+
                 # Severity filter
                 event_severity_idx = _severity_index(event.severity)
                 if event_severity_idx < min_severity_idx:
@@ -229,7 +238,6 @@ class AlertScheduler:
 
                 self._db.save(event)
 
-                distance_km = haversine(lat, lon, event.lat, event.lon)
                 await self._notifier.send_event(event, distance_km, location_name)
 
             except Exception:

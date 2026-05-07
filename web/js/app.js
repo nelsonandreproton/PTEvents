@@ -86,10 +86,10 @@ function initMap(lat, lon, radiusKm) {
     radius: radiusKm * 1000,
     color: '#58a6ff',
     fillColor: '#58a6ff',
-    fillOpacity: 0.04,
-    weight: 1,
-    dashArray: '4 6',
-  }).addTo(map);
+    fillOpacity: 0.06,
+    weight: 2,
+    dashArray: '6 8',
+  }).addTo(map).bindTooltip(`Raio: ${radiusKm} km`, { permanent: false });
 }
 
 // ── Data ──────────────────────────────────────────────────────
