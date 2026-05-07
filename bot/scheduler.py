@@ -24,6 +24,17 @@ logger = logging.getLogger(__name__)
 
 SEVERITY_ORDER = [Severity.LOW, Severity.MEDIUM, Severity.HIGH, Severity.CRITICAL]
 
+_COLLECTOR_CONFIG_KEY: dict[str, str] = {
+    "IpmaCollector": "ipma",
+    "FogosCollector": "fogos",
+    "TransitCollector": "transit",
+    "AirQualityCollector": "air_quality",
+    "GrevesCollector": "greves",
+    "ObrasCollector": "obras",
+    "EventosCollector": "eventos",
+    "NasaFirmsCollector": "nasa_firms",
+}
+
 
 def _severity_index(severity: Severity) -> int:
     try:
@@ -200,7 +211,12 @@ class AlertScheduler:
             except_severity = Severity.CRITICAL
         except_severity_idx = _severity_index(except_severity)
 
+        collectors_cfg = self._settings.get("collectors", {})
         collector_name = type(collector).__name__
+        config_key = _COLLECTOR_CONFIG_KEY.get(collector_name, "")
+        collector_cfg = collectors_cfg.get(config_key, {})
+        excluded_types = {t.upper() for t in collector_cfg.get("excluded_types", [])}
+
         try:
             events = await collector.collect(lat, lon, radius_km)
         except Exception:
@@ -211,6 +227,10 @@ class AlertScheduler:
 
         for event in events:
             try:
+                # Skip excluded event types for this collector
+                if excluded_types and event.type in excluded_types:
+                    continue
+
                 # Skip closed/resolved events — check both status field and description text
                 if event.status not in ("active", "resolving", ""):
                     continue
