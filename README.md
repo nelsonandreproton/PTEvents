@@ -2,20 +2,28 @@
 
 Bot Telegram que monitoriza eventos disruptivos num raio configurável e envia notificações em tempo real.
 
-## Fontes de dados (Fase 1)
+## Fontes de dados
 
 | Fonte | Dados | Intervalo |
 |-------|-------|-----------|
 | IPMA | Avisos meteorológicos + sismos | 10 min |
 | Fogos.pt | Incêndios ativos | 5 min |
+| Waze / TomTom / HERE | Incidentes de trânsito (waterfall) | 3 min |
+| APA QualAr | Índice de qualidade do ar (IQAr) | 30 min |
+| DGERT | Greves e pré-avisos | 60 min |
+| Obras (Odivelas/Sintra/Amadora) | Obras na via pública | 6 h |
+| Eventos (Odivelas/Eventbrite) | Eventos públicos locais | 60 min |
+| NASA FIRMS VIIRS | Focos de calor por satélite | 10 min |
 
 ## Stack
 
 - Python 3.11
-- python-telegram-bot 20+
+- python-telegram-bot 20.7
 - APScheduler 3.x
 - httpx (async HTTP)
 - SQLite (deduplicação com TTL)
+- tenacity (retry com backoff exponencial)
+- defusedxml (parse RSS seguro)
 - Docker Compose
 
 ## Estrutura
@@ -23,17 +31,19 @@ Bot Telegram que monitoriza eventos disruptivos num raio configurável e envia n
 ```
 PTEvents/
 ├── bot/          main.py, scheduler.py, notifier.py, geo.py
-├── collectors/   base.py, ipma.py, fogos.py
+├── collectors/   base.py, ipma.py, fogos.py, transit.py,
+│                 air_quality.py, greves.py, obras.py,
+│                 eventos.py, nasa_firms.py, edp.py
 ├── models/       event.py, db.py
 ├── config/       settings.yaml
-└── tests/        test_geo.py, test_dedup.py
+└── tests/        87 testes (pytest)
 ```
 
 ## Configuração
 
 ```bash
 cp .env.example .env
-# editar .env com TELEGRAM_BOT_TOKEN e TELEGRAM_CHAT_ID
+# editar .env com tokens e chaves API
 ```
 
 Editar `config/settings.yaml` com a localização pretendida:
@@ -56,9 +66,10 @@ docker compose up -d
 
 | Comando | Descrição |
 |---------|-----------|
-| `/start` | Boas-vindas e estado |
-| `/status` | Eventos ativos nas últimas horas |
+| `/start` | Boas-vindas e lista de comandos |
+| `/status` | Eventos ativos (últimos 20) |
 | `/ping` | Health check |
+| `/radius <km>` | Ajusta raio de monitorização (temporário) |
 
 ## Testes
 
@@ -73,6 +84,14 @@ pytest tests/
 |----------|------------|-----------|
 | `TELEGRAM_BOT_TOKEN` | Sim | Token do @BotFather |
 | `TELEGRAM_CHAT_ID` | Sim | ID do chat para notificações |
-| `HERE_API_KEY` | Não | Trânsito HERE (Fase 2) |
-| `TOMTOM_API_KEY` | Não | Trânsito TomTom (Fase 2) |
-| `NASA_FIRMS_KEY` | Não | Satélite incêndios (Fase 3) |
+| `HERE_API_KEY` | Não | Trânsito HERE (fallback) |
+| `TOMTOM_API_KEY` | Não | Trânsito TomTom (fallback) |
+| `NASA_FIRMS_KEY` | Não | Satélite incêndios VIIRS |
+| `EVENTBRITE_TOKEN` | Não | Token privado Eventbrite (dashboard → API Keys → Private token) |
+
+## Notas
+
+- **Waze** não requer chave API e é o provider de trânsito primário.
+- **Eventbrite** requer um *Private Token* (não o app key/client secret) — obtido em [eventbrite.com/account-settings/apps](https://www.eventbrite.com/account-settings/apps).
+- **E-REDES** (antiga EDP Distribuição) não expõe API pública — coletor em stub.
+- Todas as chaves opcionais: se não configuradas, o coletor respetivo é ignorado silenciosamente.

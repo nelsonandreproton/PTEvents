@@ -1,6 +1,6 @@
 location:
-  lat: 38.7169
-  lon: -9.1399
+  lat: 38.8097
+  lon: -9.2518
   radius_km: 10
   name: "Casa"
 
@@ -24,23 +24,30 @@ collectors:
     enabled: true
     interval_minutes: 5
   transit:
-    enabled: false
+    enabled: true
     interval_minutes: 3
-    provider: "here"
+    providers: ["waze", "tomtom", "here"]
+  air_quality:
+    enabled: true
+    interval_minutes: 30
   greves:
-    enabled: false
+    enabled: true
     interval_minutes: 60
   obras:
-    enabled: false
+    enabled: true
     interval_minutes: 360
-  air_quality:
-    enabled: false
-    interval_minutes: 30
+  eventos:
+    enabled: true
+    interval_minutes: 60
+  nasa_firms:
+    enabled: true
+    interval_minutes: 10
 
 api_keys:
   here: "${HERE_API_KEY}"
   tomtom: "${TOMTOM_API_KEY}"
   nasa_firms: "${NASA_FIRMS_KEY}"
+  eventbrite: "${EVENTBRITE_TOKEN}"
 
 dedup:
   ttl_hours:

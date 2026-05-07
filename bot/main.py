@@ -27,7 +27,6 @@ DB_PATH = "data/events.db"
 
 
 def _substitute_env(value: str) -> str:
-    """Replace exact '${VAR}' string with os.environ value."""
     m = _ENV_VAR_RE.match(value)
     if m:
         var_name = m.group(1)
@@ -36,7 +35,6 @@ def _substitute_env(value: str) -> str:
 
 
 def _resolve_env_vars(obj):
-    """Recursively walk settings and substitute ${VAR} in string values."""
     if isinstance(obj, dict):
         return {k: _resolve_env_vars(v) for k, v in obj.items()}
     if isinstance(obj, list):
@@ -52,23 +50,63 @@ def load_settings() -> dict:
     return _resolve_env_vars(raw)
 
 
+def _allowed(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
+    """Return True only if the message comes from the configured chat."""
+    allowed_id = context.bot_data.get("allowed_chat_id", 0)
+    return update.effective_chat is not None and update.effective_chat.id == allowed_id
+
+
 # --- Telegram command handlers ---
 
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _allowed(update, context):
+        return
     await update.message.reply_text(
         "Olá! Sou o PTEvents Bot.\n"
         "Vou enviar alertas de eventos locais (IPMA, fogos, etc.).\n\n"
         "Comandos disponíveis:\n"
         "/ping — verificar se estou activo\n"
-        "/status — últimos eventos activos"
+        "/status — últimos eventos activos\n"
+        "/radius <km> — ajustar raio de monitorização (temporário)"
     )
 
 
 async def cmd_ping(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _allowed(update, context):
+        return
     await update.message.reply_text("pong")
 
 
+async def cmd_radius(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _allowed(update, context):
+        return
+
+    args = context.args or []
+    if not args:
+        current = context.bot_data["settings"]["location"]["radius_km"]
+        await update.message.reply_text(f"Raio atual: {current} km\nUso: /radius <km>")
+        return
+
+    try:
+        new_radius = float(args[0])
+    except ValueError:
+        await update.message.reply_text("Valor inválido. Exemplo: /radius 15")
+        return
+
+    if not (1 <= new_radius <= 100):
+        await update.message.reply_text("Raio deve estar entre 1 e 100 km.")
+        return
+
+    context.bot_data["settings"]["location"]["radius_km"] = new_radius
+    await update.message.reply_text(
+        f"Raio atualizado para {new_radius:.0f} km (até reiniciar)."
+    )
+
+
 async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _allowed(update, context):
+        return
+
     db: EventDB = context.bot_data["db"]
     rows = db.get_active(20)
 
@@ -80,16 +118,14 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     for row in rows:
         grouped[row["source"]].append(row)
 
-    lines = ["*Eventos activos (últimos 20):*\n"]
+    lines = ["Eventos activos (últimos 20):\n"]
     for source, events in grouped.items():
-        lines.append(f"*{source}*")
+        lines.append(source.upper())
         for e in events:
-            lines.append(
-                f"  • [{e['severity']}] {e['type']} — {e['started_at']}"
-            )
+            lines.append(f"  [{e['severity']}] {e['type']} — {e['started_at'][:16]}")
         lines.append("")
 
-    await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
+    await update.message.reply_text("\n".join(lines))
 
 
 # --- Application lifecycle ---
@@ -110,10 +146,17 @@ async def _run(settings: dict) -> None:
         .build()
     )
     app.bot_data["db"] = db
+    app.bot_data["settings"] = settings
+    try:
+        app.bot_data["allowed_chat_id"] = int(chat_id)
+    except (ValueError, TypeError):
+        app.bot_data["allowed_chat_id"] = 0
+        logger.warning("TELEGRAM_CHAT_ID is not a valid integer — all commands will be ignored")
 
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("ping", cmd_ping))
     app.add_handler(CommandHandler("status", cmd_status))
+    app.add_handler(CommandHandler("radius", cmd_radius))
 
     stop_event = asyncio.Event()
 
@@ -121,9 +164,8 @@ async def _run(settings: dict) -> None:
         logger.info("Shutdown signal received")
         stop_event.set()
 
-    # Register SIGTERM/SIGINT — fallback signal.signal for Windows
     try:
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         loop.add_signal_handler(signal.SIGTERM, _request_stop)
         loop.add_signal_handler(signal.SIGINT, _request_stop)
     except (NotImplementedError, AttributeError):

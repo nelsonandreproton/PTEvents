@@ -1,11 +1,20 @@
 import logging
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
+
+_LISBON = ZoneInfo("Europe/Lisbon")
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 
 from collectors.ipma import IpmaCollector
 from collectors.fogos import FogosCollector
+from collectors.transit import TransitCollector
+from collectors.air_quality import AirQualityCollector
+from collectors.greves import GrevesCollector
+from collectors.obras import ObrasCollector
+from collectors.eventos import EventosCollector
+from collectors.nasa_firms import NasaFirmsCollector
 from models.db import EventDB
 from models.event import Severity
 from bot.notifier import Notifier
@@ -24,10 +33,10 @@ def _severity_index(severity: Severity) -> int:
 
 
 def _in_quiet_hours(start: str, end: str) -> bool:
-    """Return True if current UTC time is within quiet hours [start, end).
+    """Return True if current Lisbon local time is within quiet hours [start, end).
     Supports midnight wrap-around (e.g. start=22:00, end=06:00).
     """
-    now = datetime.now(timezone.utc).strftime("%H:%M")
+    now = datetime.now(_LISBON).strftime("%H:%M")
     if start <= end:
         return start <= now < end
     # Wraps midnight
@@ -51,7 +60,7 @@ class AlertScheduler:
             self._scheduler.add_job(
                 self._run_collector,
                 trigger=IntervalTrigger(minutes=interval),
-                args=[IpmaCollector()],
+                args=[IpmaCollector(self._settings)],
                 id="ipma",
                 name="IPMA collector",
                 max_instances=1,
@@ -65,13 +74,97 @@ class AlertScheduler:
             self._scheduler.add_job(
                 self._run_collector,
                 trigger=IntervalTrigger(minutes=interval),
-                args=[FogosCollector()],
+                args=[FogosCollector(self._settings)],
                 id="fogos",
                 name="Fogos collector",
                 max_instances=1,
                 misfire_grace_time=60,
             )
             logger.info("Scheduled Fogos collector every %d minutes", interval)
+
+        transit_cfg = collectors_cfg.get("transit", {})
+        if transit_cfg.get("enabled", False):
+            interval = transit_cfg.get("interval_minutes", 3)
+            self._scheduler.add_job(
+                self._run_collector,
+                trigger=IntervalTrigger(minutes=interval),
+                args=[TransitCollector(self._settings)],
+                id="transit",
+                name="Transit collector",
+                max_instances=1,
+                misfire_grace_time=60,
+            )
+            logger.info("Scheduled HERE Transit collector every %d minutes", interval)
+
+        air_quality_cfg = collectors_cfg.get("air_quality", {})
+        if air_quality_cfg.get("enabled", False):
+            interval = air_quality_cfg.get("interval_minutes", 30)
+            self._scheduler.add_job(
+                self._run_collector,
+                trigger=IntervalTrigger(minutes=interval),
+                args=[AirQualityCollector(self._settings)],
+                id="air_quality",
+                name="APA Air Quality collector",
+                max_instances=1,
+                misfire_grace_time=60,
+            )
+            logger.info("Scheduled APA Air Quality collector every %d minutes", interval)
+
+        greves_cfg = collectors_cfg.get("greves", {})
+        if greves_cfg.get("enabled", False):
+            interval = greves_cfg.get("interval_minutes", 60)
+            self._scheduler.add_job(
+                self._run_collector,
+                trigger=IntervalTrigger(minutes=interval),
+                args=[GrevesCollector(self._settings)],
+                id="greves",
+                name="DGERT Greves collector",
+                max_instances=1,
+                misfire_grace_time=300,
+            )
+            logger.info("Scheduled Greves collector every %d minutes", interval)
+
+        obras_cfg = collectors_cfg.get("obras", {})
+        if obras_cfg.get("enabled", False):
+            interval = obras_cfg.get("interval_minutes", 360)
+            self._scheduler.add_job(
+                self._run_collector,
+                trigger=IntervalTrigger(minutes=interval),
+                args=[ObrasCollector(self._settings)],
+                id="obras",
+                name="Obras collector",
+                max_instances=1,
+                misfire_grace_time=300,
+            )
+            logger.info("Scheduled Obras collector every %d minutes", interval)
+
+        eventos_cfg = collectors_cfg.get("eventos", {})
+        if eventos_cfg.get("enabled", False):
+            interval = eventos_cfg.get("interval_minutes", 60)
+            self._scheduler.add_job(
+                self._run_collector,
+                trigger=IntervalTrigger(minutes=interval),
+                args=[EventosCollector(self._settings)],
+                id="eventos",
+                name="Eventos collector",
+                max_instances=1,
+                misfire_grace_time=300,
+            )
+            logger.info("Scheduled Eventos collector every %d minutes", interval)
+
+        nasa_firms_cfg = collectors_cfg.get("nasa_firms", {})
+        if nasa_firms_cfg.get("enabled", False):
+            interval = nasa_firms_cfg.get("interval_minutes", 10)
+            self._scheduler.add_job(
+                self._run_collector,
+                trigger=IntervalTrigger(minutes=interval),
+                args=[NasaFirmsCollector(self._settings)],
+                id="nasa_firms",
+                name="NASA FIRMS collector",
+                max_instances=1,
+                misfire_grace_time=60,
+            )
+            logger.info("Scheduled NASA FIRMS collector every %d minutes", interval)
 
         self._scheduler.start()
         logger.info("AlertScheduler started")

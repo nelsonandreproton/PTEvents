@@ -5,3 +5,4 @@ beautifulsoup4==4.12.3
 pyyaml==6.0.1
 tenacity==8.2.3
 python-dotenv==1.0.0
+defusedxml==0.7.1
