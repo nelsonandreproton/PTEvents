@@ -108,6 +108,7 @@ header h1 span {
 #map {
   flex: 1;
   min-width: 0;
+  min-height: 400px;
 }
 
 /* ── Sidebar ────────────────────────────────────────────────── */

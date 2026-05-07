@@ -53,8 +53,19 @@ let locationData = null;
 
 // ── Init ──────────────────────────────────────────────────────
 
+function radiusToZoom(radiusKm) {
+  // Approximate: radius 5→13, 10→12, 20→11, 50→10, 100→9
+  if (radiusKm <= 5)  return 13;
+  if (radiusKm <= 10) return 12;
+  if (radiusKm <= 20) return 11;
+  if (radiusKm <= 50) return 10;
+  return 9;
+}
+
 function initMap(lat, lon, radiusKm) {
-  map = L.map('map', { zoomControl: true }).setView([lat, lon], 12);
+  const zoom = radiusToZoom(radiusKm);
+  map = L.map('map', { zoomControl: true }).setView([lat, lon], zoom);
+  setTimeout(() => map.invalidateSize(), 100);
 
   L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
     attribution: '© OpenStreetMap contributors',
