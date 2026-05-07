@@ -243,16 +243,34 @@ class TomTomCollector:
             severity = _TOMTOM_MAG_MAP.get(mag, Severity.LOW)
 
             events_list = props.get("events") or []
-            description = "; ".join(
-                e.get("description", "") for e in events_list if e.get("description")
-            ) or props.get("from", "")
+
+            # Skip permanently closed incidents (code 401 = "Encerrado/a")
+            event_codes = {int(e.get("code", 0)) for e in events_list}
+            if 401 in event_codes:
+                return None
+
+            description_parts = [e.get("description", "") for e in events_list if e.get("description")]
+            from_str = props.get("from", "")
+            to_str = props.get("to", "")
+            delay_s = props.get("delay")
+            length_m = props.get("length")
+
+            if delay_s:
+                description_parts.append(f"Demora: {int(delay_s // 60)} min")
+            if length_m:
+                description_parts.append(f"Extensão: {length_m / 1000:.1f} km")
+            description = "; ".join(description_parts) or from_str
 
             road = props.get("roadNumbers") or []
             road_str = ", ".join(road) if isinstance(road, list) else str(road)
-            from_str = props.get("from", "")
+
             title = f"{event_type.value.replace('_', ' ').title()}"
             if road_str:
                 title += f" — {road_str}"
+                if from_str:
+                    title += f" ({from_str})"
+            elif from_str and to_str and from_str != to_str:
+                title += f" — {from_str} → {to_str}"
             elif from_str:
                 title += f" — {from_str}"
 
