@@ -1,7 +1,7 @@
 location:
   lat: 38.8097
   lon: -9.2518
-  radius_km: 10
+  radius_km: 5
   name: "Casa"
 
 telegram:
