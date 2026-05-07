@@ -195,21 +195,41 @@ def test_tomtom_parse_accident():
     assert event.source == "tomtom"
 
 
-def test_tomtom_parse_roadwork():
+def test_tomtom_parse_broken_down_vehicle():
+    # iconCategory 14 = broken-down vehicle → ACCIDENT
     collector = TomTomCollector("test-key")
     inc = _make_tomtom_incident(icon_category=14)
     event = collector._parse_incident(inc)
     assert event is not None
-    assert event.type == EventType.ROADWORK
+    assert event.type == EventType.ACCIDENT
 
 
 def test_tomtom_parse_road_closure():
+    # iconCategory 8 = road closed, no code 401 → passes through as ROAD_CLOSURE
     collector = TomTomCollector("test-key")
-    inc = _make_tomtom_incident(icon_category=3, magnitude=4)
+    inc = _make_tomtom_incident(icon_category=8, magnitude=4)
     event = collector._parse_incident(inc)
     assert event is not None
     assert event.type == EventType.ROAD_CLOSURE
     assert event.severity == Severity.CRITICAL
+
+
+def test_tomtom_skip_encerrado():
+    # code 401 = Encerrado/a → filtered out regardless of iconCategory
+    collector = TomTomCollector("test-key")
+    inc = _make_tomtom_incident(icon_category=8, magnitude=4)
+    inc["properties"]["events"] = [{"code": 401, "description": "Encerrado/a"}]
+    event = collector._parse_incident(inc)
+    assert event is None
+
+
+def test_tomtom_jam_is_congestion():
+    # iconCategory 6 = standstill traffic → CONGESTION, not ROAD_CLOSURE
+    collector = TomTomCollector("test-key")
+    inc = _make_tomtom_incident(icon_category=6, magnitude=3)
+    event = collector._parse_incident(inc)
+    assert event is not None
+    assert event.type == EventType.CONGESTION
 
 
 def test_tomtom_parse_title_includes_road():

@@ -177,18 +177,18 @@ class WazeCollector:
 TOMTOM_URL = "https://api.tomtom.com/traffic/services/5/incidentDetails"
 
 _TOMTOM_ICON_MAP: dict[int, EventType] = {
-    1: EventType.ACCIDENT,
-    2: EventType.CONGESTION,
-    3: EventType.ROAD_CLOSURE,
-    4: EventType.ROADWORK,
-    5: EventType.ROAD_CLOSURE,
-    6: EventType.ROAD_CLOSURE,
-    7: EventType.CONGESTION,
-    8: EventType.ACCIDENT,
-    9: EventType.ROAD_CLOSURE,
-    10: EventType.CONGESTION,
-    11: EventType.ACCIDENT,
-    14: EventType.ROADWORK,
+    1: EventType.ACCIDENT,         # accident
+    2: EventType.STORM,            # fog
+    3: EventType.ACCIDENT,         # dangerous conditions
+    4: EventType.STORM,            # rain
+    5: EventType.STORM,            # ice
+    6: EventType.CONGESTION,       # jam / traffic standstill
+    7: EventType.ROAD_CLOSURE,     # lane closed
+    8: EventType.ROAD_CLOSURE,     # road closed
+    9: EventType.PLANNED_WORKS,    # roadworks
+    10: EventType.STORM,           # wind
+    11: EventType.FLOOD,           # flooding
+    14: EventType.ACCIDENT,        # broken-down vehicle
 }
 
 _TOMTOM_MAG_MAP: dict[int, Severity] = {
