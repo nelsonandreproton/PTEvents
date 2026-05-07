@@ -27,16 +27,30 @@ CREATE TABLE IF NOT EXISTS events (
 )
 """
 
+_CREATE_DETAILS_TABLE = """
+CREATE TABLE IF NOT EXISTS event_details (
+    id          TEXT PRIMARY KEY REFERENCES events(id) ON DELETE CASCADE,
+    title       TEXT NOT NULL DEFAULT '',
+    description TEXT NOT NULL DEFAULT '',
+    lat         REAL,
+    lon         REAL,
+    url         TEXT,
+    status      TEXT NOT NULL DEFAULT 'active'
+)
+"""
+
 
 class EventDB:
     def __init__(self, db_path: str) -> None:
         self.db_path = db_path
         with self._connect() as conn:
             conn.execute(_CREATE_TABLE)
+            conn.execute(_CREATE_DETAILS_TABLE)
 
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA foreign_keys = ON")
         return conn
 
     def _expires_at(self, event: Event) -> datetime:
@@ -70,6 +84,21 @@ class EventDB:
                     expires_at,
                 ),
             )
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO event_details (id, title, description, lat, lon, url, status)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    event.id,
+                    event.title,
+                    event.description,
+                    event.lat,
+                    event.lon,
+                    event.url,
+                    event.status,
+                ),
+            )
 
     def cleanup_expired(self) -> None:
         now = datetime.now(UTC).isoformat()
@@ -83,3 +112,24 @@ class EventDB:
                 "SELECT * FROM events WHERE expires_at >= ? ORDER BY started_at DESC LIMIT ?",
                 (now, limit),
             ).fetchall()
+
+    def get_active_full(self, limit: int = 200) -> list[sqlite3.Row]:
+        """Return active events joined with their details (lat/lon/title/description/url)."""
+        now = datetime.now(UTC).isoformat()
+        with self._connect() as conn:
+            return conn.execute(
+                """
+                SELECT e.*, d.title, d.description, d.lat, d.lon, d.url, d.status
+                FROM events e
+                LEFT JOIN event_details d ON e.id = d.id
+                WHERE e.expires_at >= ?
+                ORDER BY e.started_at DESC
+                LIMIT ?
+                """,
+                (now, limit),
+            ).fetchall()
+
+    def dismiss(self, event_id: str) -> None:
+        """Manually remove an event (cascade deletes event_details row)."""
+        with self._connect() as conn:
+            conn.execute("DELETE FROM events WHERE id = ?", (event_id,))

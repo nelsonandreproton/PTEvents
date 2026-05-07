@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="pt">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>PTEvents — Alerta Local</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+        integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="anonymous" />
+  <link rel="stylesheet" href="/ptevents/css/styles.css" />
+</head>
+<body>
+  <div id="app">
+    <header>
+      <h1>PTEvents <span id="location-name"></span></h1>
+      <div id="controls">
+        <button id="btn-refresh" title="Atualizar">&#8635;</button>
+        <button id="btn-clear-expired" title="Limpar expirados">&#128465;</button>
+      </div>
+    </header>
+
+    <div id="filter-bar">
+      <span class="filter-label">Filtrar:</span>
+      <button class="filter-btn active" data-type="ALL">Todos</button>
+      <button class="filter-btn" data-type="FIRE">&#128293; Incêndio</button>
+      <button class="filter-btn" data-type="STORM">&#127783; Tempestade</button>
+      <button class="filter-btn" data-type="EARTHQUAKE">&#127754; Sismo</button>
+      <button class="filter-btn" data-type="CONGESTION">&#128663; Trânsito</button>
+      <button class="filter-btn" data-type="ROAD_CLOSURE">&#9940; Corte</button>
+      <button class="filter-btn" data-type="AIR_QUALITY">&#127981; Ar</button>
+      <button class="filter-btn" data-type="STRIKE">&#9994; Greve</button>
+      <button class="filter-btn" data-type="PLANNED_WORKS">&#128679; Obras</button>
+      <button class="filter-btn" data-type="EVENT_CLOSURE">&#127881; Evento</button>
+    </div>
+
+    <div id="main-layout">
+      <div id="map"></div>
+      <aside id="sidebar">
+        <div id="event-list"></div>
+      </aside>
+    </div>
+
+    <div id="popup-overlay" class="hidden">
+      <div id="popup-card">
+        <button id="popup-close">&times;</button>
+        <div id="popup-content"></div>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+          integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV/XN2GqXw=" crossorigin="anonymous"></script>
+  <script src="/ptevents/js/app.js"></script>
+</body>
+</html>

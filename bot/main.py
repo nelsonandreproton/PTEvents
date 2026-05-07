@@ -13,6 +13,7 @@ from telegram.ext import Application, CommandHandler, ContextTypes
 from models.db import EventDB
 from bot.notifier import Notifier
 from bot.scheduler import AlertScheduler
+from bot.web import start_web_server
 
 logging.basicConfig(
     format="%(asctime)s %(levelname)s %(name)s — %(message)s",
@@ -174,6 +175,7 @@ async def _run(settings: dict) -> None:
         signal.signal(signal.SIGINT, _request_stop)
 
     logger.info("Starting PTEvents bot")
+    web_runner = await start_web_server(db, settings)
     async with app:
         await app.start()
         await app.updater.start_polling(drop_pending_updates=True)
@@ -186,6 +188,7 @@ async def _run(settings: dict) -> None:
         await app.updater.stop()
         await app.stop()
 
+    await web_runner.cleanup()
     logger.info("PTEvents bot shut down cleanly")
 
 
