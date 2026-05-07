@@ -27,6 +27,7 @@ collectors:
     enabled: true
     interval_minutes: 3
     providers: ["waze", "tomtom", "here"]
+    excluded_types: ["CONGESTION"]
   air_quality:
     enabled: true
     interval_minutes: 30
