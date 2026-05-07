@@ -23,9 +23,12 @@ CREATE TABLE IF NOT EXISTS events (
     type        TEXT NOT NULL,
     severity    TEXT NOT NULL,
     started_at  TEXT NOT NULL,
-    expires_at  TEXT NOT NULL
+    expires_at  TEXT NOT NULL,
+    notified    INTEGER NOT NULL DEFAULT 0
 )
 """
+
+_MIGRATE_NOTIFIED = "ALTER TABLE events ADD COLUMN notified INTEGER NOT NULL DEFAULT 0"
 
 _CREATE_DETAILS_TABLE = """
 CREATE TABLE IF NOT EXISTS event_details (
@@ -46,6 +49,11 @@ class EventDB:
         with self._connect() as conn:
             conn.execute(_CREATE_TABLE)
             conn.execute(_CREATE_DETAILS_TABLE)
+            # Migrate existing DB that lacks the notified column
+            try:
+                conn.execute(_MIGRATE_NOTIFIED)
+            except Exception:
+                pass  # Column already exists
 
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.db_path)
@@ -58,14 +66,18 @@ class EventDB:
         return event.started_at + timedelta(hours=ttl)
 
     def is_new(self, event: Event) -> bool:
-        now = datetime.now(UTC).isoformat()
+        """Return True if this event has never been notified before."""
         with self._connect() as conn:
             row = conn.execute(
-                "SELECT expires_at FROM events WHERE id = ?", (event.id,)
+                "SELECT notified FROM events WHERE id = ?", (event.id,)
             ).fetchone()
         if row is None:
             return True
-        return row["expires_at"] < now
+        return row["notified"] == 0
+
+    def mark_notified(self, event_id: str) -> None:
+        with self._connect() as conn:
+            conn.execute("UPDATE events SET notified = 1 WHERE id = ?", (event_id,))
 
     def save(self, event: Event) -> None:
         expires_at = self._expires_at(event).isoformat()

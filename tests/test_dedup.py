@@ -42,24 +42,28 @@ def test_new_event_is_new(db):
     assert db.is_new(event) is True
 
 
-def test_saved_event_not_new(db):
+def test_saved_event_still_new_until_notified(db):
     event = make_test_event("evt-002")
     db.save(event)
+    # save() alone does not suppress re-notification; mark_notified() does
+    assert db.is_new(event) is True
+    db.mark_notified(event.id)
     assert db.is_new(event) is False
 
 
-def test_expired_event_is_new(db):
+def test_notified_event_not_new_even_after_expiry(db):
     event = make_test_event("evt-003", EventType.FIRE)
     db.save(event)
+    db.mark_notified(event.id)
 
-    # Force expires_at into the past via direct sqlite3 access
+    # Expiry does not reset the notified flag
     past = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
     conn = sqlite3.connect(db.db_path)
     conn.execute("UPDATE events SET expires_at = ? WHERE id = ?", (past, event.id))
     conn.commit()
     conn.close()
 
-    assert db.is_new(event) is True
+    assert db.is_new(event) is False
 
 
 def test_different_ids_are_independent(db):
@@ -67,6 +71,7 @@ def test_different_ids_are_independent(db):
     event_b = make_test_event("evt-005")
 
     db.save(event_a)
+    db.mark_notified(event_a.id)
 
     assert db.is_new(event_a) is False
     assert db.is_new(event_b) is True

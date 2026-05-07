@@ -207,10 +207,15 @@ class AlertScheduler:
             logger.exception("Collector %s failed during collect()", collector_name)
             return
 
+        _CLOSED_KEYWORDS = ("encerrado", "fechado", "resolvido", "closed", "resolved", "encerrada", "fechada")
+
         for event in events:
             try:
-                # Skip closed/resolved events
+                # Skip closed/resolved events — check both status field and description text
                 if event.status not in ("active", "resolving", ""):
+                    continue
+                desc_lower = (event.description or "").lower()
+                if any(kw in desc_lower for kw in _CLOSED_KEYWORDS):
                     continue
 
                 # Hard radius guard (belt-and-suspenders over base.py collect())
@@ -237,8 +242,9 @@ class AlertScheduler:
                     continue
 
                 self._db.save(event)
-
-                await self._notifier.send_event(event, distance_km, location_name)
+                sent = await self._notifier.send_event(event, distance_km, location_name)
+                if sent:
+                    self._db.mark_notified(event.id)
 
             except Exception:
                 logger.exception(
