@@ -18,12 +18,16 @@ def _row_to_dict(row: sqlite3.Row) -> dict:
     return dict(row)
 
 
-def _build_app(db, settings: dict) -> web.Application:
+def _build_app(db, settings: dict, config_path: Path | None = None) -> web.Application:
     app = web.Application()
     app["db"] = db
     app["settings"] = settings
+    app["config_path"] = config_path
     app.router.add_get("/ptevents/api/events", _handle_events)
     app.router.add_delete("/ptevents/api/events/{event_id}", _handle_dismiss)
+    app.router.add_get("/ptevents/api/filters", _handle_get_filters)
+    app.router.add_put("/ptevents/api/filters", _handle_put_filters)
+    app.router.add_get("/ptevents/api/status", _handle_api_status)
     app.router.add_get("/ptevents/{path:.*}", _handle_static)
     app.router.add_get("/ptevents", _handle_index)
     return app
@@ -69,6 +73,57 @@ async def _handle_events(request: web.Request) -> web.Response:
     )
 
 
+async def _handle_get_filters(request: web.Request) -> web.Response:
+    filters = request.app["settings"].get("filters", {})
+    return web.Response(
+        text=json.dumps(filters, ensure_ascii=False),
+        content_type="application/json",
+    )
+
+
+async def _handle_put_filters(request: web.Request) -> web.Response:
+    try:
+        body = await request.json()
+    except Exception:
+        raise web.HTTPBadRequest(reason="Invalid JSON")
+
+    settings = request.app["settings"]
+    filters = settings.setdefault("filters", {})
+
+    if "min_severity" in body:
+        filters["min_severity"] = str(body["min_severity"])
+    if "enabled_types" in body:
+        v = body["enabled_types"]
+        filters["enabled_types"] = list(v) if v is not None else None
+
+    config_path: Path | None = request.app.get("config_path")
+    if config_path:
+        from bot.preferences import save_filters
+        try:
+            save_filters(config_path, filters)
+        except Exception:
+            logger.exception("Failed to persist filters via API")
+
+    return web.Response(
+        text=json.dumps({"ok": True, "filters": filters}, ensure_ascii=False),
+        content_type="application/json",
+    )
+
+
+async def _handle_api_status(request: web.Request) -> web.Response:
+    db = request.app["db"]
+    rows = db.get_active(200)
+    filters = request.app["settings"].get("filters", {})
+    return web.Response(
+        text=json.dumps({
+            "active_events": len(rows),
+            "min_severity": filters.get("min_severity", "LOW"),
+            "enabled_types": filters.get("enabled_types"),
+        }, ensure_ascii=False),
+        content_type="application/json",
+    )
+
+
 async def _handle_dismiss(request: web.Request) -> web.Response:
     event_id = request.match_info["event_id"]
     db = request.app["db"]
@@ -105,8 +160,14 @@ async def _handle_static(request: web.Request) -> web.Response:
     return web.Response(body=file_path.read_bytes(), content_type=mime)
 
 
-async def start_web_server(db, settings: dict, host: str = "0.0.0.0", port: int = 8080) -> web.AppRunner:
-    app = _build_app(db, settings)
+async def start_web_server(
+    db,
+    settings: dict,
+    host: str = "0.0.0.0",
+    port: int = 8080,
+    config_path: Path | None = None,
+) -> web.AppRunner:
+    app = _build_app(db, settings, config_path=config_path)
     runner = web.AppRunner(app)
     await runner.setup()
     site = web.TCPSite(runner, host, port)
