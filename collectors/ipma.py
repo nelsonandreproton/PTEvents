@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 import httpx
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception
 
+from bot.geo import haversine
 from collectors.base import BaseCollector
 from models.event import Event, EventType, Severity
 
@@ -14,40 +15,64 @@ logger = logging.getLogger(__name__)
 WARNINGS_URL = "https://api.ipma.pt/open-data/forecast/warnings/warnings_www.json"
 SEISMIC_URL = "https://api.ipma.pt/open-data/observation/seismic/sismicidade.json"
 
-# Centroids (lat, lon) by district code
+# IPMA area codes with representative centroids (lat, lon).
+# Codes from the live warnings API — not the ISO district codes used previously.
 DISTRICT_CENTROIDS: dict[str, tuple[float, float]] = {
-    "LIS": (38.7169, -9.1399),
-    "POR": (41.1496, -8.6109),
-    "SET": (38.5244, -8.8882),
-    "FAR": (37.0194, -7.9322),
-    "BRG": (41.5454, -8.4265),
-    "VCT": (41.6932, -8.8307),
-    "AVR": (40.6405, -8.6537),
-    "CBR": (40.2033, -8.4103),
-    "VIS": (40.6566, -7.9122),
-    "GDA": (40.9252, -8.5340),
-    "STR": (39.7378, -8.8079),
-    "CAS": (39.6636, -8.1338),
-    "PGA": (39.4044, -7.8652),
-    "EVR": (38.5711, -7.9086),
-    "BEJ": (37.9642, -7.8638),
-    "PTG": (39.2840, -7.4291),
+    # Continente
+    "AVR": (40.6405, -8.6537),   # Aveiro
+    "BJA": (37.9642, -7.8638),   # Beja
+    "BRG": (41.5454, -8.4265),   # Braga
+    "BGC": (41.8017, -6.7590),   # Bragança
+    "CBO": (39.8196, -7.4404),   # Castelo Branco
+    "CBR": (40.2033, -8.4103),   # Coimbra
+    "EVR": (38.5711, -7.9086),   # Évora
+    "FAR": (37.0194, -7.9322),   # Faro
+    "GDA": (40.9252, -8.5340),   # Guarda
+    "LRA": (39.7450, -8.8070),   # Leiria
+    "LSB": (38.7169, -9.1399),   # Lisboa
+    "MCS": (38.9317, -9.2620),   # Lisboa Norte / Mafra / Sintra (Odivelas area)
+    "MCN": (38.6979, -9.0942),   # Lisboa Sul / Montijo / Setúbal Norte
+    "MPS": (38.5244, -8.8882),   # Setúbal / Palmela / Sesimbra
+    "MRM": (38.3577, -8.6108),   # Montijo / Alcochete
+    "PTG": (39.2840, -7.4291),   # Portalegre
+    "PTO": (41.1496, -8.6109),   # Porto
+    "STB": (38.5281, -8.4483),   # Setúbal / Baía
+    "STM": (39.2337, -8.6854),   # Santarém
+    "VCT": (41.6932, -8.8307),   # Viana do Castelo
+    "VIS": (40.6566, -7.9122),   # Viseu
+    "VRL": (41.2985, -7.7440),   # Vila Real
+    # Regiões autónomas
+    "ACE": (37.7412, -25.6756),  # Açores Este (São Miguel)
+    "AOC": (38.7254, -27.2206),  # Açores Ocidente
+    "AOR": (39.1562, -28.0308),  # Açores Oriente
+    "MAD": (32.6669, -16.9241),  # Madeira
 }
+
 DEFAULT_CENTROID = (39.5, -8.0)
 
-AWARENESS_LEVEL_TO_SEVERITY: dict[str, Severity] = {
-    "yellow": Severity.MEDIUM,
-    "orange": Severity.HIGH,
-    "red": Severity.CRITICAL,
-}
-
+# Map IPMA Portuguese awareness type names to EventType
 AWARENESS_TYPE_TO_EVENT_TYPE: dict[str, EventType] = {
+    "Precipitação": EventType.RAIN,
+    "Trovoada": EventType.STORM,
+    "Vento": EventType.WIND,
+    "Neve": EventType.COLD,
+    "Tempo Frio": EventType.COLD,
+    "Tempo Quente": EventType.HEAT,
+    "Nevoeiro": EventType.RAIN,
+    "Agitação Marítima": EventType.FLOOD,
+    # English names kept for backwards compatibility
     "Wind": EventType.WIND,
     "Rain": EventType.RAIN,
     "Snow/Ice": EventType.COLD,
     "Extreme temperature": EventType.HEAT,
     "Coastal Event": EventType.FLOOD,
     "Thunderstorm": EventType.STORM,
+}
+
+AWARENESS_LEVEL_TO_SEVERITY: dict[str, Severity] = {
+    "yellow": Severity.MEDIUM,
+    "orange": Severity.HIGH,
+    "red": Severity.CRITICAL,
 }
 
 
@@ -58,7 +83,6 @@ def _sha256_id(raw: str) -> str:
 def _parse_datetime(value: str | None) -> datetime | None:
     if not value:
         return None
-    # Normalise the Z suffix and various ISO formats
     value = value.strip().replace("Z", "+00:00")
     formats = [
         "%Y-%m-%dT%H:%M:%S%z",
@@ -93,6 +117,16 @@ def _make_retry() -> retry:
     )
 
 
+def _nearest_districts(home_lat: float, home_lon: float, max_districts: int = 2) -> list[str]:
+    """Return the closest IPMA district codes to the given coordinates."""
+    distances = [
+        (code, haversine(home_lat, home_lon, lat, lon))
+        for code, (lat, lon) in DISTRICT_CENTROIDS.items()
+    ]
+    distances.sort(key=lambda x: x[1])
+    return [code for code, _ in distances[:max_districts]]
+
+
 class IpmaCollector(BaseCollector):
     source_name = "ipma"
 
@@ -110,7 +144,6 @@ class IpmaCollector(BaseCollector):
         response = await client.get(SEISMIC_URL)
         response.raise_for_status()
         data = response.json()
-        # The API may return a dict with a list, or a bare list
         if isinstance(data, dict):
             for key in ("data", "items", "features"):
                 if key in data and isinstance(data[key], list):
@@ -125,19 +158,14 @@ class IpmaCollector(BaseCollector):
         awareness_type = item.get("awarenessTypeName", "")
         text = item.get("text", "")
 
-        severity = AWARENESS_LEVEL_TO_SEVERITY.get(awareness_level, Severity.LOW)
+        # Skip green (no-action) advisories
+        if awareness_level == "green" or awareness_level == "":
+            return None
+
+        severity = AWARENESS_LEVEL_TO_SEVERITY.get(awareness_level, Severity.MEDIUM)
         event_type = AWARENESS_TYPE_TO_EVENT_TYPE.get(awareness_type, EventType.STORM)
 
-        # Resolve centroid — try exact match then prefix match
-        district_key = area.upper()
-        centroid = DISTRICT_CENTROIDS.get(district_key)
-        if centroid is None:
-            for key, coords in DISTRICT_CENTROIDS.items():
-                if district_key.startswith(key) or key.startswith(district_key):
-                    centroid = coords
-                    break
-        if centroid is None:
-            centroid = DEFAULT_CENTROID
+        centroid = DISTRICT_CENTROIDS.get(area.upper(), DEFAULT_CENTROID)
         lat, lon = centroid
 
         started_at = _parse_datetime(start_time) or datetime.now(timezone.utc)
@@ -245,3 +273,44 @@ class IpmaCollector(BaseCollector):
             0 if isinstance(seismic_result, Exception) else len(seismic_result),
         )
         return events
+
+    async def collect(
+        self, home_lat: float, home_lon: float, radius_km: float
+    ) -> list[Event]:
+        """Override base collect() to use district matching instead of radius.
+
+        IPMA warnings apply to entire districts whose centroids can be 15+ km
+        from home. A rain warning for 'LSB' (Lisboa) is relevant even if the
+        centroid is outside the configured radius_km.
+
+        Strategy: find the 2 nearest IPMA districts to home_lat/home_lon and
+        accept any warning whose idAreaAviso matches one of them. Seismic events
+        fall back to the standard haversine radius check since they have precise
+        coordinates.
+        """
+        try:
+            events = await self.fetch()
+        except Exception:
+            logger.exception("IpmaCollector fetch failed")
+            return []
+
+        home_districts = set(_nearest_districts(home_lat, home_lon, max_districts=2))
+        logger.debug("IPMA home districts: %s", home_districts)
+
+        result = []
+        for event in events:
+            try:
+                raw = event.raw or {}
+                area = raw.get("idAreaAviso", "").upper()
+                if area:
+                    # Warning event — accept if area matches a home district
+                    if area in home_districts:
+                        result.append(event)
+                else:
+                    # Seismic event — use standard radius check
+                    if haversine(event.lat, event.lon, home_lat, home_lon) <= radius_km:
+                        result.append(event)
+            except Exception:
+                logger.exception("IpmaCollector geo filter failed for event %s", event.id)
+
+        return result
