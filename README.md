@@ -30,13 +30,13 @@ Bot Telegram que monitoriza eventos disruptivos num raio configurável e envia n
 
 ```
 PTEvents/
-├── bot/          main.py, scheduler.py, notifier.py, geo.py
+├── bot/          main.py, scheduler.py, notifier.py, geo.py, keyboards.py, preferences.py
 ├── collectors/   base.py, ipma.py, fogos.py, transit.py,
 │                 air_quality.py, greves.py, obras.py,
 │                 eventos.py, nasa_firms.py, edp.py
 ├── models/       event.py, db.py
 ├── config/       settings.yaml
-└── tests/        87 testes (pytest)
+└── tests/        128 testes (pytest)
 ```
 
 ## Configuração
@@ -70,6 +70,8 @@ docker compose up -d
 | `/status` | Eventos ativos (últimos 20) |
 | `/ping` | Health check |
 | `/radius <km>` | Ajusta raio de monitorização (temporário) |
+| `/types` | Ativar/desativar tipos de eventos (menu interativo) |
+| `/severity` | Definir severidade mínima das notificações |
 
 ## Testes
 

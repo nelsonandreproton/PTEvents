@@ -10,6 +10,7 @@ telegram:
 
 filters:
   min_severity: LOW
+  enabled_types: null
   quiet_hours:
     enabled: true
     start: "23:00"

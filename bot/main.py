@@ -8,10 +8,20 @@ from pathlib import Path
 
 import yaml
 from telegram import Update
-from telegram.ext import Application, CommandHandler, ContextTypes
+from telegram.error import BadRequest
+from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes
 
 from models.db import EventDB
+from models.event import Severity
+from bot.keyboards import (
+    all_types_values,
+    build_severity_keyboard,
+    build_types_keyboard,
+    normalize_enabled_types,
+    toggle_type,
+)
 from bot.notifier import Notifier
+from bot.preferences import save_filters
 from bot.scheduler import AlertScheduler
 from bot.web import start_web_server
 
@@ -68,7 +78,9 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "Comandos disponíveis:\n"
         "/ping — verificar se estou activo\n"
         "/status — últimos eventos activos\n"
-        "/radius <km> — ajustar raio de monitorização (temporário)"
+        "/radius <km> — ajustar raio de monitorização (temporário)\n"
+        "/types — ativar/desativar tipos de eventos\n"
+        "/severity — definir severidade mínima"
     )
 
 
@@ -129,6 +141,157 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     await update.message.reply_text("\n".join(lines))
 
 
+def _persist_filters(context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Write the in-memory filters dict back to settings.yaml."""
+    filters = context.bot_data["settings"].get("filters", {})
+    try:
+        save_filters(CONFIG_PATH, filters)
+    except Exception:
+        logger.exception("Failed to persist filter preferences")
+
+
+async def cmd_types(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _allowed(update, context):
+        return
+    filters = context.bot_data["settings"].setdefault("filters", {})
+    enabled = normalize_enabled_types(filters.get("enabled_types"))
+    await update.message.reply_text(
+        "Tipos de eventos (✅ ativo / ❌ inativo):",
+        reply_markup=build_types_keyboard(enabled, page=0),
+    )
+
+
+async def cmd_severity(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _allowed(update, context):
+        return
+    filters = context.bot_data["settings"].setdefault("filters", {})
+    name = (filters.get("min_severity") or "LOW").upper()
+    try:
+        current = Severity[name]
+    except KeyError:
+        current = Severity.LOW
+    await update.message.reply_text(
+        f"Severidade mínima atual: {current.value}",
+        reply_markup=build_severity_keyboard(current),
+    )
+
+
+async def _try_edit_markup(query, **kwargs) -> None:
+    try:
+        await query.edit_message_reply_markup(**kwargs)
+    except BadRequest as exc:
+        if "not modified" not in str(exc).lower():
+            raise
+
+
+async def _try_edit_text(query, **kwargs) -> None:
+    try:
+        await query.edit_message_text(**kwargs)
+    except BadRequest as exc:
+        if "not modified" not in str(exc).lower():
+            raise
+
+
+async def cb_query(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Single dispatcher for all inline-keyboard taps."""
+    query = update.callback_query
+    if query is None:
+        return
+    chat_id = query.message.chat.id if query.message else None
+    allowed_id = context.bot_data.get("allowed_chat_id", 0)
+    if chat_id != allowed_id:
+        await query.answer()
+        return
+
+    data = query.data or ""
+    settings = context.bot_data["settings"]
+    filters = settings.setdefault("filters", {})
+
+    if data == "noop":
+        await query.answer()
+        return
+
+    if data.startswith("tp:"):
+        # Page navigation only — no state change
+        try:
+            page = int(data.split(":", 1)[1])
+        except ValueError:
+            await query.answer()
+            return
+        enabled = normalize_enabled_types(filters.get("enabled_types"))
+        await _try_edit_markup(query, reply_markup=build_types_keyboard(enabled, page=page))
+        await query.answer()
+        return
+
+    if data.startswith("tt:"):
+        # Toggle one type. Format: tt:<page>:<TYPE>
+        parts = data.split(":", 2)
+        if len(parts) != 3:
+            await query.answer()
+            return
+        try:
+            page = int(parts[1])
+        except ValueError:
+            page = 0
+        type_value = parts[2]
+        try:
+            new_list = toggle_type(filters.get("enabled_types"), type_value)
+        except ValueError:
+            await query.answer("Tipo inválido")
+            return
+        filters["enabled_types"] = new_list
+        _persist_filters(context)
+        enabled = set(new_list)
+        await _try_edit_markup(query, reply_markup=build_types_keyboard(enabled, page=page))
+        await query.answer(f"{type_value}: {'on' if type_value in enabled else 'off'}")
+        return
+
+    if data.startswith("tx:"):
+        # Bulk: tx:all:<page> or tx:none:<page>
+        parts = data.split(":", 2)
+        if len(parts) != 3:
+            await query.answer()
+            return
+        action = parts[1]
+        try:
+            page = int(parts[2])
+        except ValueError:
+            page = 0
+        if action == "all":
+            filters["enabled_types"] = all_types_values()
+            answer = "Todos ativos"
+        elif action == "none":
+            filters["enabled_types"] = []
+            answer = "Todos inativos"
+        else:
+            await query.answer()
+            return
+        _persist_filters(context)
+        enabled = set(filters["enabled_types"])
+        await _try_edit_markup(query, reply_markup=build_types_keyboard(enabled, page=page))
+        await query.answer(answer)
+        return
+
+    if data.startswith("sv:"):
+        name = data.split(":", 1)[1].upper()
+        try:
+            new_severity = Severity[name]
+        except KeyError:
+            await query.answer("Severidade inválida")
+            return
+        filters["min_severity"] = new_severity.value
+        _persist_filters(context)
+        await _try_edit_text(
+            query,
+            text=f"Severidade mínima atual: {new_severity.value}",
+            reply_markup=build_severity_keyboard(new_severity),
+        )
+        await query.answer(f"→ {new_severity.value}")
+        return
+
+    await query.answer()
+
+
 # --- Application lifecycle ---
 
 async def _run(settings: dict) -> None:
@@ -158,6 +321,9 @@ async def _run(settings: dict) -> None:
     app.add_handler(CommandHandler("ping", cmd_ping))
     app.add_handler(CommandHandler("status", cmd_status))
     app.add_handler(CommandHandler("radius", cmd_radius))
+    app.add_handler(CommandHandler("types", cmd_types))
+    app.add_handler(CommandHandler("severity", cmd_severity))
+    app.add_handler(CallbackQueryHandler(cb_query))
 
     stop_event = asyncio.Event()
 

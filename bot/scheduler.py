@@ -200,6 +200,11 @@ class AlertScheduler:
             min_severity = Severity.LOW
         min_severity_idx = _severity_index(min_severity)
 
+        enabled_types = filters.get("enabled_types")
+        enabled_types_set: set[str] | None = (
+            set(enabled_types) if enabled_types is not None else None
+        )
+
         quiet_cfg = filters.get("quiet_hours", {})
         quiet_enabled = quiet_cfg.get("enabled", False)
         quiet_start = quiet_cfg.get("start", "23:00")
@@ -241,6 +246,10 @@ class AlertScheduler:
                 # Hard radius guard (belt-and-suspenders over base.py collect())
                 distance_km = haversine(lat, lon, event.lat, event.lon)
                 if distance_km > radius_km:
+                    continue
+
+                # Type filter (Telegram-only — dashboard sees everything)
+                if enabled_types_set is not None and event.type.value not in enabled_types_set:
                     continue
 
                 # Severity filter
