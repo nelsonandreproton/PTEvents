@@ -1,6 +1,22 @@
 # PTEvents — Alerta Local
 
-Bot Telegram que monitoriza eventos disruptivos num raio configurável e envia notificações em tempo real.
+Monitor de eventos disruptivos num raio configurável. Envia notificações Telegram em tempo real e serve um dashboard web com mapa interativo.
+
+## Arquitetura
+
+PTEvents corre como **scheduler + servidor web** — não tem bot Telegram próprio.
+As notificações são enviadas pelo `Notifier` (push direto via Bot API).
+Os comandos Telegram (`/alertas`, `/alertas_tipos`, `/alertas_severidade`) são registados no **GarminBot**, que chama a API REST do PTEvents por HTTP.
+
+```
+GarminBot ──HTTP──► PTEvents REST API (:8085)
+                         │
+                    AlertScheduler
+                         │
+              ┌──────────┴──────────┐
+           Collectors           Notifier
+       (IPMA, Fogos, ...)    (push Telegram)
+```
 
 ## Fontes de dados
 
@@ -18,9 +34,9 @@ Bot Telegram que monitoriza eventos disruptivos num raio configurável e envia n
 ## Stack
 
 - Python 3.11
-- python-telegram-bot 20.7
+- aiohttp 3.9 (web dashboard + REST API)
 - APScheduler 3.x
-- httpx (async HTTP)
+- httpx (async HTTP nos collectors)
 - SQLite (deduplicação com TTL)
 - tenacity (retry com backoff exponencial)
 - defusedxml (parse RSS seguro)
@@ -30,13 +46,13 @@ Bot Telegram que monitoriza eventos disruptivos num raio configurável e envia n
 
 ```
 PTEvents/
-├── bot/          main.py, scheduler.py, notifier.py, geo.py, keyboards.py, preferences.py
+├── bot/          main.py, scheduler.py, notifier.py, geo.py, preferences.py, web.py
 ├── collectors/   base.py, ipma.py, fogos.py, transit.py,
 │                 air_quality.py, greves.py, obras.py,
 │                 eventos.py, nasa_firms.py, edp.py
 ├── models/       event.py, db.py
 ├── config/       settings.yaml
-└── tests/        128 testes (pytest)
+└── tests/        100 testes (pytest)
 ```
 
 ## Configuração
@@ -52,8 +68,12 @@ Editar `config/settings.yaml` com a localização pretendida:
 location:
   lat: 38.7169
   lon: -9.1399
-  radius_km: 10
+  radius_km: 5
   name: "Casa"
+
+filters:
+  min_severity: LOW
+  enabled_types: null   # null = todos os 30 tipos ativos
 ```
 
 ## Arranque
@@ -62,16 +82,34 @@ location:
 docker compose up -d
 ```
 
-## Comandos do bot
+O serviço expõe a porta `8085` (configurável via `PORT` env var).
+
+## API REST
+
+| Método | Endpoint | Descrição |
+|--------|----------|-----------|
+| `GET` | `/ptevents/api/events` | Eventos ativos (max 200) |
+| `GET` | `/ptevents/api/status` | Contagem + filtros ativos |
+| `GET` | `/ptevents/api/filters` | Filtros atuais |
+| `PUT` | `/ptevents/api/filters` | Atualizar `min_severity` e/ou `enabled_types` |
+| `DELETE` | `/ptevents/api/events/{id}` | Dispensar evento |
+| `GET` | `/ptevents` | Dashboard web |
+
+## Comandos Telegram (via GarminBot)
 
 | Comando | Descrição |
 |---------|-----------|
-| `/start` | Boas-vindas e lista de comandos |
-| `/status` | Eventos ativos (últimos 20) |
-| `/ping` | Health check |
-| `/radius <km>` | Ajusta raio de monitorização (temporário) |
-| `/types` | Ativar/desativar tipos de eventos (menu interativo) |
-| `/severity` | Definir severidade mínima das notificações |
+| `/alertas` | Estado atual: eventos ativos, severidade, tipos |
+| `/alertas_tipos` | Ativar/desativar tipos de eventos (menu paginado) |
+| `/alertas_severidade` | Definir severidade mínima das notificações |
+
+As preferências são guardadas em `config/settings.yaml` e aplicadas no próximo tick do scheduler — sem necessidade de reinício.
+
+## Filtros
+
+- **`min_severity`**: `LOW` / `MEDIUM` / `HIGH` / `CRITICAL`
+- **`enabled_types`**: lista de tipos ativos, ou `null` para todos
+- Por coletor, é possível definir `excluded_types` em `settings.yaml` para exclusões estáticas (ex: ignorar CONGESTION no coletor de trânsito)
 
 ## Testes
 
@@ -84,16 +122,18 @@ pytest tests/
 
 | Variável | Obrigatória | Descrição |
 |----------|------------|-----------|
-| `TELEGRAM_BOT_TOKEN` | Sim | Token do @BotFather |
+| `TELEGRAM_BOT_TOKEN` | Sim | Token do @BotFather (para envio de notificações) |
 | `TELEGRAM_CHAT_ID` | Sim | ID do chat para notificações |
+| `PORT` | Não | Porta do servidor web (default: 8080) |
 | `HERE_API_KEY` | Não | Trânsito HERE (fallback) |
 | `TOMTOM_API_KEY` | Não | Trânsito TomTom (fallback) |
 | `NASA_FIRMS_KEY` | Não | Satélite incêndios VIIRS |
-| `EVENTBRITE_TOKEN` | Não | Token privado Eventbrite (dashboard → API Keys → Private token) |
+| `EVENTBRITE_TOKEN` | Não | Token privado Eventbrite |
 
 ## Notas
 
 - **Waze** não requer chave API e é o provider de trânsito primário.
-- **Eventbrite** requer um *Private Token* (não o app key/client secret) — obtido em [eventbrite.com/account-settings/apps](https://www.eventbrite.com/account-settings/apps).
-- **E-REDES** (antiga EDP Distribuição) não expõe API pública — coletor em stub.
+- **Eventbrite** requer um *Private Token* — obtido em [eventbrite.com/account-settings/apps](https://www.eventbrite.com/account-settings/apps).
+- **E-REDES** não expõe API pública — coletor em stub.
 - Todas as chaves opcionais: se não configuradas, o coletor respetivo é ignorado silenciosamente.
+- PTEvents nunca faz polling Telegram — partilha o token apenas para envio (push). O bot polling é exclusivo do GarminBot.
