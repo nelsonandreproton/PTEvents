@@ -7,7 +7,7 @@ from collections import defaultdict
 from pathlib import Path
 
 import yaml
-from telegram import Update
+from telegram import BotCommand, Update
 from telegram.error import BadRequest
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes
 
@@ -344,6 +344,14 @@ async def _run(settings: dict) -> None:
     web_runner = await start_web_server(db, settings)
     async with app:
         await app.start()
+        await app.bot.set_my_commands([
+            BotCommand("start", "Boas-vindas e lista de comandos"),
+            BotCommand("ping", "Verificar se o bot está activo"),
+            BotCommand("status", "Eventos activos (últimos 20)"),
+            BotCommand("radius", "Ajustar raio de monitorização (temporário)"),
+            BotCommand("types", "Ativar/desativar tipos de eventos"),
+            BotCommand("severity", "Definir severidade mínima das notificações"),
+        ])
         await app.updater.start_polling(drop_pending_updates=True)
         scheduler.start()
 
