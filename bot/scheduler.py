@@ -7,6 +7,14 @@ _LISBON = ZoneInfo("Europe/Lisbon")
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 
+# Heartbeat integration — optional: silently skipped if module not available
+# (e.g. during local development without the HetznerCheck volume mounted).
+try:
+    from heartbeat import beat as _hb_beat  # mounted at /hetznercheck via PYTHONPATH
+    _HEARTBEAT_AVAILABLE = True
+except ImportError:
+    _HEARTBEAT_AVAILABLE = False
+
 from collectors.ipma import IpmaCollector
 from collectors.fogos import FogosCollector
 from collectors.transit import TransitCollector
@@ -177,6 +185,15 @@ class AlertScheduler:
             )
             logger.info("Scheduled NASA FIRMS collector every %d minutes", interval)
 
+        if _HEARTBEAT_AVAILABLE:
+            self._scheduler.add_job(
+                self._beat_heartbeat,
+                trigger=IntervalTrigger(minutes=5),
+                id="heartbeat",
+                name="PTEvents heartbeat",
+                max_instances=1,
+            )
+
         self._scheduler.start()
         logger.info("AlertScheduler started")
 
@@ -184,6 +201,16 @@ class AlertScheduler:
         if self._scheduler.running:
             self._scheduler.shutdown(wait=False)
             logger.info("AlertScheduler stopped")
+
+    async def _beat_heartbeat(self) -> None:
+        """Emit a liveness heartbeat every 5 minutes."""
+        if _HEARTBEAT_AVAILABLE:
+            _hb_beat(
+                "PTEvents",
+                status="ok",
+                note="scheduler running",
+                next_in_seconds=300,  # expect next beat in 5 min
+            )
 
     async def _run_collector(self, collector) -> None:
         loc = self._settings["location"]
