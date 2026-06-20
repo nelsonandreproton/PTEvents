@@ -8,21 +8,24 @@ from pathlib import Path
 
 from aiohttp import web
 
+from models.event import Severity
+
 logger = logging.getLogger(__name__)
 
 STATIC_DIR = Path(__file__).parent.parent / "web"
 UTC = timezone.utc
+_VALID_SEVERITIES = frozenset(s.value for s in Severity)
 
 
 def _row_to_dict(row: sqlite3.Row) -> dict:
     return dict(row)
 
 
-def _build_app(db, settings: dict, config_path: Path | None = None) -> web.Application:
+def _build_app(db, settings: dict, prefs_path: Path | None = None) -> web.Application:
     app = web.Application()
     app["db"] = db
     app["settings"] = settings
-    app["config_path"] = config_path
+    app["prefs_path"] = prefs_path
     app.router.add_get("/ptevents/api/events", _handle_events)
     app.router.add_delete("/ptevents/api/events/{event_id}", _handle_dismiss)
     app.router.add_get("/ptevents/api/filters", _handle_get_filters)
@@ -87,25 +90,38 @@ async def _handle_put_filters(request: web.Request) -> web.Response:
     except Exception:
         raise web.HTTPBadRequest(reason="Invalid JSON")
 
+    if not isinstance(body, dict):
+        raise web.HTTPBadRequest(reason="Body must be a JSON object")
+
     settings = request.app["settings"]
     filters = settings.setdefault("filters", {})
 
     if "min_severity" in body:
-        filters["min_severity"] = str(body["min_severity"])
+        sev = str(body["min_severity"]).upper()
+        if sev not in _VALID_SEVERITIES:
+            raise web.HTTPBadRequest(reason=f"Invalid min_severity: {sev}")
+        filters["min_severity"] = sev
     if "enabled_types" in body:
         v = body["enabled_types"]
-        filters["enabled_types"] = list(v) if v is not None else None
+        if v is None:
+            filters["enabled_types"] = None
+        elif isinstance(v, list) and all(isinstance(t, str) for t in v):
+            filters["enabled_types"] = [t.upper() for t in v]
+        else:
+            raise web.HTTPBadRequest(reason="enabled_types must be a list of strings or null")
 
-    config_path: Path | None = request.app.get("config_path")
-    if config_path:
-        from bot.preferences import save_filters
+    persisted = True
+    prefs_path: Path | None = request.app.get("prefs_path")
+    if prefs_path:
+        from bot.preferences import save_filter_overrides
         try:
-            save_filters(config_path, filters)
+            save_filter_overrides(prefs_path, filters)
         except Exception:
-            logger.exception("Failed to persist filters via API")
+            logger.exception("Failed to persist filter overrides via API")
+            persisted = False
 
     return web.Response(
-        text=json.dumps({"ok": True, "filters": filters}, ensure_ascii=False),
+        text=json.dumps({"ok": True, "persisted": persisted, "filters": filters}, ensure_ascii=False),
         content_type="application/json",
     )
 
@@ -165,9 +181,9 @@ async def start_web_server(
     settings: dict,
     host: str = "0.0.0.0",
     port: int = 8080,
-    config_path: Path | None = None,
+    prefs_path: Path | None = None,
 ) -> web.AppRunner:
-    app = _build_app(db, settings, config_path=config_path)
+    app = _build_app(db, settings, prefs_path=prefs_path)
     runner = web.AppRunner(app)
     await runner.setup()
     site = web.TCPSite(runner, host, port)

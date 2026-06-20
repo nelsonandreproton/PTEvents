@@ -9,6 +9,7 @@ import yaml
 
 from models.db import EventDB
 from bot.notifier import Notifier
+from bot.preferences import apply_overrides, load_filter_overrides
 from bot.scheduler import AlertScheduler
 from bot.web import start_web_server
 
@@ -22,6 +23,9 @@ _ENV_VAR_RE = re.compile(r"^\$\{([A-Za-z_][A-Za-z0-9_]*)\}$")
 
 CONFIG_PATH = Path(__file__).parent.parent / "config" / "settings.yaml"
 DB_PATH = "data/events.db"
+# Runtime filter overrides live in the data volume, NOT in the git-tracked
+# config/ dir — so the homeserver deploy.sh (`git reset --hard`) can't wipe them.
+FILTER_PREFS_PATH = Path("data") / "filter_prefs.yaml"
 
 
 def _substitute_env(value: str) -> str:
@@ -45,7 +49,18 @@ def _resolve_env_vars(obj):
 def load_settings() -> dict:
     with open(CONFIG_PATH, "r", encoding="utf-8") as f:
         raw = yaml.safe_load(f)
-    return _resolve_env_vars(raw)
+    settings = _resolve_env_vars(raw)
+
+    # Layer runtime filter overrides (min_severity, enabled_types) from the
+    # data volume on top of the tracked base filters. quiet_hours and friends
+    # still come from settings.yaml, so deploy edits to them keep propagating.
+    overrides = load_filter_overrides(FILTER_PREFS_PATH)
+    if overrides:
+        base_filters = settings.get("filters", {})
+        settings["filters"] = apply_overrides(base_filters, overrides)
+        logger.info("Applied filter overrides from %s: %s", FILTER_PREFS_PATH, overrides)
+
+    return settings
 
 
 async def _run(settings: dict) -> None:
@@ -74,7 +89,7 @@ async def _run(settings: dict) -> None:
 
     port = int(os.environ.get("PORT", 8080))
     logger.info("Starting PTEvents (scheduler + web, no Telegram bot) on port %d", port)
-    web_runner = await start_web_server(db, settings, port=port, config_path=CONFIG_PATH)
+    web_runner = await start_web_server(db, settings, port=port, prefs_path=FILTER_PREFS_PATH)
     scheduler.start()
 
     await stop_event.wait()

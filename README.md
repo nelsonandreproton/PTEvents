@@ -51,8 +51,9 @@ PTEvents/
 │                 air_quality.py, greves.py, obras.py,
 │                 eventos.py, nasa_firms.py, edp.py
 ├── models/       event.py, db.py
-├── config/       settings.yaml
-└── tests/        100 testes (pytest)
+├── config/       settings.yaml  (config base, versionado)
+├── data/         events.db + filter_prefs.yaml  (volume, não versionado)
+└── tests/        pytest
 ```
 
 ## Configuração
@@ -103,7 +104,7 @@ O serviço expõe a porta `8085` (configurável via `PORT` env var).
 | `/alertas_tipos` | Ativar/desativar tipos de eventos (menu paginado) |
 | `/alertas_severidade` | Definir severidade mínima das notificações |
 
-As preferências são guardadas em `config/settings.yaml` e aplicadas no próximo tick do scheduler — sem necessidade de reinício.
+As preferências (`min_severity`, `enabled_types`) são guardadas em `data/filter_prefs.yaml` — no volume de dados, **não** em `config/settings.yaml` — e aplicadas no próximo tick do scheduler sem necessidade de reinício. Como vivem no volume e não no repositório, sobrevivem ao `git reset --hard` que o `deploy.sh` corre. No arranque, são sobrepostas aos filtros base de `settings.yaml`; as restantes chaves (ex: `quiet_hours`) continuam a vir de `settings.yaml`.
 
 ## Filtros
 
