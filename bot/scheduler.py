@@ -192,6 +192,9 @@ class AlertScheduler:
                 id="heartbeat",
                 name="PTEvents heartbeat",
                 max_instances=1,
+                # Beat at startup too: otherwise a restart leaves a >5 min gap and
+                # HetznerCheck raises a false "sem heartbeat" alert.
+                next_run_time=datetime.now(timezone.utc),
             )
 
         self._scheduler.start()
