@@ -1,4 +1,5 @@
 """Tests for Fase 2 collectors: transit providers and AirQualityCollector."""
+import contextlib
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, patch
 
@@ -13,6 +14,7 @@ from collectors.transit import (
     _parse_dt,
     _bbox,
 )
+from collectors.base import SourceUnavailableError
 from collectors.air_quality import AirQualityCollector, _station_event_id, _haversine_km
 from models.event import EventType, Severity
 
@@ -411,12 +413,41 @@ async def test_facade_returns_waze_events_without_calling_others():
 
 
 @pytest.mark.asyncio
-async def test_facade_all_providers_fail_returns_empty():
+async def test_facade_all_providers_fail_raises_source_unavailable():
     collector = TransitCollector(_SETTINGS)
-    for _, provider in collector._providers:
-        patch.object(provider, "fetch_near", new=AsyncMock(side_effect=Exception("down"))).start()
-    events = await collector.fetch()
-    assert events == []
+    with contextlib.ExitStack() as stack:
+        for _, provider in collector._providers:
+            stack.enter_context(
+                patch.object(provider, "fetch_near", new=AsyncMock(side_effect=ValueError("down")))
+            )
+        with pytest.raises(SourceUnavailableError) as exc_info:
+            await collector.fetch()
+    msg = str(exc_info.value)
+    assert "waze" in msg and "ValueError" in msg
+    assert "test-tomtom-key" not in msg and "http" not in msg
+
+
+@pytest.mark.asyncio
+async def test_facade_provider_succeeds_with_no_events_returns_empty():
+    collector = TransitCollector(_SETTINGS)
+    waze, tomtom = collector._providers[0][1], collector._providers[1][1]
+    with patch.object(waze, "fetch_near", new=AsyncMock(side_effect=Exception("down"))):
+        with patch.object(tomtom, "fetch_near", new=AsyncMock(return_value=[])):
+            assert await collector.fetch() == []
+
+
+@pytest.mark.asyncio
+async def test_facade_no_providers_configured_returns_empty():
+    collector = TransitCollector({"location": _SETTINGS["location"], "collectors": {"transit": {"providers": []}}})
+    assert await collector.fetch() == []
+
+
+@pytest.mark.asyncio
+async def test_collect_propagates_source_unavailable():
+    collector = TransitCollector(_SETTINGS)
+    with patch.object(collector, "fetch", new=AsyncMock(side_effect=SourceUnavailableError("all down"))):
+        with pytest.raises(SourceUnavailableError):
+            await collector.collect(HOME_LAT, HOME_LON, 10)
 
 
 @pytest.mark.asyncio

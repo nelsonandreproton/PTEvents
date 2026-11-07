@@ -17,6 +17,10 @@ logging.basicConfig(
     format="%(asctime)s %(levelname)s %(name)s — %(message)s",
     level=logging.INFO,
 )
+# httpx logs every request URL at INFO; TomTom/HERE/NASA FIRMS put API keys in
+# the URL, so keep these at WARNING to stop keys leaking into docker logs.
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
 _ENV_VAR_RE = re.compile(r"^\$\{([A-Za-z_][A-Za-z0-9_]*)\}$")
@@ -32,7 +36,10 @@ def _substitute_env(value: str) -> str:
     m = _ENV_VAR_RE.match(value)
     if m:
         var_name = m.group(1)
-        return os.environ.get(var_name, value)
+        resolved = os.environ.get(var_name, "")
+        if not resolved:
+            logger.warning("Env var %s not set — dependent feature disabled", var_name)
+        return resolved
     return value
 
 

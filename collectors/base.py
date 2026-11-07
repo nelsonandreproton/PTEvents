@@ -7,6 +7,10 @@ from models.event import Event
 logger = logging.getLogger(__name__)
 
 
+class SourceUnavailableError(Exception):
+    """Raised by a collector when its data source is down (not merely empty)."""
+
+
 class BaseCollector(ABC):
     def __init__(self, settings: dict) -> None:
         self.settings = settings
@@ -23,6 +27,8 @@ class BaseCollector(ABC):
     ) -> list[Event]:
         try:
             events = await self.fetch()
+        except SourceUnavailableError:
+            raise
         except Exception:
             logger.exception("Collector %s fetch failed", self.source_name)
             return []

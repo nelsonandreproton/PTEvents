@@ -25,10 +25,13 @@ from collectors.eventos import EventosCollector
 from collectors.nasa_firms import NasaFirmsCollector
 from models.db import EventDB
 from models.event import Severity
-from bot.notifier import Notifier
+from bot.notifier import Notifier, _escape
 from bot.geo import haversine
 
 logger = logging.getLogger(__name__)
+
+FAILURE_ALERT_THRESHOLD = 3
+MAX_ERROR_CHARS = 200
 
 SEVERITY_ORDER = [Severity.LOW, Severity.MEDIUM, Severity.HIGH, Severity.CRITICAL]
 
@@ -68,6 +71,8 @@ class AlertScheduler:
         self._db = db
         self._notifier = notifier
         self._scheduler = AsyncIOScheduler()
+        self._failure_counts: dict[str, int] = {}
+        self._alerted: set[str] = set()
 
     def start(self) -> None:
         loc = self._settings["location"]
@@ -215,6 +220,31 @@ class AlertScheduler:
                 next_in_seconds=300,  # expect next beat in 5 min
             )
 
+    async def _send_status(self, text: str) -> None:
+        try:
+            await self._notifier.send_text(text)
+        except Exception:
+            logger.exception("Failed to send collector status alert")
+
+    async def _record_failure(self, name: str, exc: Exception) -> None:
+        count = self._failure_counts.get(name, 0) + 1
+        self._failure_counts[name] = count
+        if count < FAILURE_ALERT_THRESHOLD or name in self._alerted:
+            return
+        self._alerted.add(name)
+        detail = f"{type(exc).__name__}: {exc}"[:MAX_ERROR_CHARS]
+        # Notifier.send_text uses MarkdownV2
+        await self._send_status(
+            f"⚠️ *PTEvents*: fonte *{_escape(name)}* indisponível "
+            f"{_escape(f'({count} falhas seguidas)')}\n{_escape(detail)}"
+        )
+
+    async def _record_success(self, name: str) -> None:
+        self._failure_counts.pop(name, None)
+        if name in self._alerted:
+            self._alerted.discard(name)
+            await self._send_status(f"✅ *PTEvents*: fonte *{_escape(name)}* recuperada")
+
     async def _run_collector(self, collector) -> None:
         loc = self._settings["location"]
         lat = loc["lat"]
@@ -254,9 +284,11 @@ class AlertScheduler:
 
         try:
             events = await collector.collect(lat, lon, radius_km)
-        except Exception:
+        except Exception as exc:
             logger.exception("Collector %s failed during collect()", collector_name)
+            await self._record_failure(collector_name, exc)
             return
+        await self._record_success(collector_name)
 
         _CLOSED_KEYWORDS = ("encerrado", "fechado", "resolvido", "closed", "resolved", "encerrada", "fechada")
 

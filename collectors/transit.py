@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 import httpx
 from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
 
-from collectors.base import BaseCollector
+from collectors.base import BaseCollector, SourceUnavailableError
 from models.event import Event, EventType, Severity
 
 logger = logging.getLogger(__name__)
@@ -498,15 +498,29 @@ class TransitCollector(BaseCollector):
         lon = float(loc.get("lon", 0))
         radius_km = float(loc.get("radius_km", 10))
 
+        if not self._providers:
+            logger.warning("TransitCollector: no providers configured")
+            return []
+
+        failures: list[str] = []
+        any_succeeded = False
         for name, provider in self._providers:
             try:
                 events = await provider.fetch_near(lat, lon, radius_km)
+                any_succeeded = True
                 if events:
                     logger.info("TransitCollector: used provider=%s, events=%d", name, len(events))
                     return events
                 logger.debug("TransitCollector: provider=%s returned no data, trying next", name)
             except Exception as exc:
-                logger.warning("TransitCollector: provider=%s failed (%s), trying next", name, type(exc).__name__)
+                reason = type(exc).__name__
+                if isinstance(exc, httpx.HTTPStatusError):
+                    reason += f" {exc.response.status_code}"
+                failures.append(f"{name}: {reason}")
+                logger.warning("TransitCollector: provider=%s failed (%s), trying next", name, reason)
+
+        if not any_succeeded:
+            raise SourceUnavailableError("all transit providers failed — " + "; ".join(failures))
 
         logger.info("TransitCollector: all providers returned no data")
         return []

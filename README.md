@@ -136,5 +136,7 @@ pytest tests/
 - **Waze** não requer chave API e é o provider de trânsito primário.
 - **Eventbrite** requer um *Private Token* — obtido em [eventbrite.com/account-settings/apps](https://www.eventbrite.com/account-settings/apps).
 - **E-REDES** não expõe API pública — coletor em stub.
-- Todas as chaves opcionais: se não configuradas, o coletor respetivo é ignorado silenciosamente.
+- Todas as chaves opcionais: se não configuradas (variável ausente ou vazia), é registado um aviso com o nome da variável e o coletor respetivo é ignorado.
+- Se uma fonte falhar 3 vezes seguidas (ex.: todos os providers de trânsito em baixo), é enviado um alerta Telegram; quando recupera, é enviada uma mensagem de recuperação. Zero incidentes não gera alerta.
+- Os logs do `httpx`/`httpcore` ficam em WARNING para que chaves API presentes nos URLs não apareçam nos logs.
 - PTEvents nunca faz polling Telegram — partilha o token apenas para envio (push). O bot polling é exclusivo do GarminBot.
